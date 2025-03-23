@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+faiss-cpu
+sentence-transformers
+scikit-learn
+nltk
+nest_asyncio
+pyngrok
+datasets
