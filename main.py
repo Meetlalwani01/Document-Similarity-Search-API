@@ -4,6 +4,7 @@ import numpy as np
 import faiss
 import nltk
 import uvicorn
+import threading
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from typing import List
@@ -13,7 +14,7 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 
-# Download NLTK data to local directory (for Railway)
+# NLTK setup
 nltk_data_path = os.path.join(os.getcwd(), "nltk_data")
 nltk.data.path.append(nltk_data_path)
 for res in ['punkt', 'stopwords', 'wordnet']:
@@ -22,16 +23,15 @@ for res in ['punkt', 'stopwords', 'wordnet']:
     except LookupError:
         nltk.download(res, download_dir=nltk_data_path)
 
-# Load NLP tools
+# NLP tools
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 token_pattern = re.compile(r"^[a-z0-9]+$")
 
 # Embedding model
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-model = SentenceTransformer(EMBEDDING_MODEL)
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Simple text splitter function
+# Text splitter
 def split_document(text: str, chunk_size=500, chunk_overlap=50) -> List[str]:
     chunks = []
     length = len(text)
@@ -40,12 +40,13 @@ def split_document(text: str, chunk_size=500, chunk_overlap=50) -> List[str]:
         chunks.append(text[i:end])
     return chunks
 
-# Global vars
+# Global state
 doc_chunks = []
 chunk_embeddings = None
 faiss_index = None
+is_ready = False
 
-# FAISS config
+# FAISS params
 nlist = 50
 m = 8
 nprobe = 10
@@ -53,12 +54,7 @@ nprobe = 10
 def advanced_preprocess(text: str) -> str:
     text = text.lower().strip()
     tokens = word_tokenize(text)
-    cleaned = []
-    for token in tokens:
-        if token in stop_words: continue
-        if not token_pattern.match(token): continue
-        lemma = lemmatizer.lemmatize(token)
-        cleaned.append(lemma)
+    cleaned = [lemmatizer.lemmatize(token) for token in tokens if token not in stop_words and token_pattern.match(token)]
     return " ".join(cleaned)
 
 def embed_texts(texts: List[str]) -> np.ndarray:
@@ -74,17 +70,19 @@ def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexIVFPQ:
     index.nprobe = nprobe
     return index
 
-def initialize_dataset(max_docs=5):
-    global doc_chunks, chunk_embeddings, faiss_index
-    data = fetch_20newsgroups(subset='train', remove=('headers', 'footers', 'quotes'))
-    raw_docs = data.data[:max_docs]
-    for doc in raw_docs:
-        doc_chunks.extend(split_document(doc))
-    chunk_embeddings = embed_texts(doc_chunks)
-    faiss_index = build_faiss_index(chunk_embeddings)
-
-# Initialize on startup
-initialize_dataset()
+def initialize_dataset(max_docs=2):
+    global doc_chunks, chunk_embeddings, faiss_index, is_ready
+    try:
+        data = fetch_20newsgroups(subset='train', remove=('headers', 'footers', 'quotes'))
+        raw_docs = data.data[:max_docs]
+        for doc in raw_docs:
+            doc_chunks.extend(split_document(doc))
+        chunk_embeddings = embed_texts(doc_chunks)
+        faiss_index = build_faiss_index(chunk_embeddings)
+        is_ready = True
+        print("✅ FAISS index initialized")
+    except Exception as e:
+        print("❌ Failed to initialize dataset:", e)
 
 # -------------------- FastAPI Setup --------------------
 class SearchResponse(BaseModel):
@@ -97,8 +95,18 @@ class AddDocRequest(BaseModel):
 
 app = FastAPI(title="Document Similarity API")
 
+@app.on_event("startup")
+def on_startup():
+    threading.Thread(target=initialize_dataset).start()
+
+@app.get("/api/status")
+def status():
+    return {"ready": is_ready, "total_chunks": len(doc_chunks)}
+
 @app.get("/api/search", response_model=SearchResponse)
 def search_documents(q: str = Query(...), top_k: int = Query(5)):
+    if not is_ready:
+        return {"query": q, "top_k": top_k, "results": ["Index not ready yet. Try again in a few seconds."]}
     query_emb = embed_texts([q])
     distances, indices = faiss_index.search(query_emb, top_k)
     results = [doc_chunks[i] for i in indices[0] if i < len(doc_chunks)]
@@ -118,7 +126,6 @@ def add_document(req: AddDocRequest):
         "total_chunks": len(doc_chunks)
     }
 
-# For local/dev testing
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
