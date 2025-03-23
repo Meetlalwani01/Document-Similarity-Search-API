@@ -143,6 +143,11 @@ You’ll see an interactive interface to test:
 | `top_k`| int    | Top results (default 5) |
 
 **Example:**
+<img width="1467" alt="image" src="https://github.com/user-attachments/assets/019820e1-3622-4339-a7f8-b5e3feff04fb" />
+<img width="1372" alt="image" src="https://github.com/user-attachments/assets/e891b642-ee31-4e0d-a3b7-7c909fa6df7f" />
+<img width="1403" alt="image" src="https://github.com/user-attachments/assets/cdaef1c0-4209-418c-a098-3536c00d929f" />
+
+---
 ```
 curl "https://<ngrok-url>/api/search?q=quantum computing&top_k=3"
 ```
