@@ -74,7 +74,7 @@ def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexIVFPQ:
     index.nprobe = nprobe
     return index
 
-def initialize_dataset(max_docs=20):
+def initialize_dataset(max_docs=5):
     global doc_chunks, chunk_embeddings, faiss_index
     data = fetch_20newsgroups(subset='train', remove=('headers', 'footers', 'quotes'))
     raw_docs = data.data[:max_docs]
